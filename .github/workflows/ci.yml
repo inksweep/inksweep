@@ -1,0 +1,41 @@
+# CPU-only tests. Tests that need a CUDA device (marker `cuda`) or the organisers' vesuvius package (importorskip)
+# skip here; the GPU validation runs on a GPU machine with the scripts in node/.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: tests (Python ${{ matrix.python-version }}, CPU)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: torch, CPU build
+        run: python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: inksweep with its test extra
+        run: python -m pip install -e ".[test]"
+      - name: tests
+        run: python -m pytest -q -rs
+      - name: command line
+        run: |
+          inksweep --version
+          inksweep readers
+          inksweep doctor --ckpt-dir "$RUNNER_TEMP/no-checkpoints" --no-hash || echo "doctor reports failures (expected without a GPU)"
+      - name: node scripts parse
+        run: for f in node/*.sh; do bash -n "$f"; done

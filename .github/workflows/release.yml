@@ -1,0 +1,58 @@
+# Release: push a tag vX.Y.Z equal to src/inksweep/__init__.py's __version__. The sdist and the wheel are built,
+# checked and published to PyPI with trusted publishing (no token: the PyPI project trusts this workflow and the
+# `pypi` environment; configure that once under the project's "Publishing" settings on pypi.org).
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build sdist and wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: the tag matches the package version
+        run: |
+          version=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/inksweep/__init__.py)
+          echo "package version $version, tag $GITHUB_REF_NAME"
+          test "v$version" = "$GITHUB_REF_NAME"
+      - name: no placeholder repository URL left
+        run: |
+          if grep -n "github.com/OWNER/" README.md pyproject.toml; then
+            echo "replace OWNER with the repository's owner before a release"
+            exit 1
+          fi
+      - name: build and check
+        run: |
+          python -m pip install --upgrade build twine
+          python -m build
+          python -m twine check --strict dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/inksweep/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

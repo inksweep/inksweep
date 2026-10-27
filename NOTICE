@@ -1,0 +1,75 @@
+inksweep
+Copyright (c) 2026 KarLex AI, Inc. Licensed under the MIT License (LICENSE).
+
+inksweep reimplements, transcribes or ports rules and code from the following MIT-licensed projects. Each source file
+that does so names its origin in its header. Their copyright notices and the MIT permission notice (reproduced once at
+the end of this file) apply to those portions.
+
+1. ScrollPrize/villa, vesuvius package (https://github.com/ScrollPrize/villa), MIT,
+   Copyright (c) 2024 Vesuvius Challenge.
+   - src/inksweep/readers/norm.py: transcription of vesuvius.image_proc.intensity.normalization.normalize_robust.
+   - src/inksweep/readers/villa.py: flat_preprocessing (from infer.flat_preprocessing_from_config), the checkpoint
+     ensemble arithmetic (infer.ProbabilityMeanEnsemble), the model-loading sequence of infer.configure_model.
+   - src/inksweep/tiling.py: the sliding tile grid (infer._sliding_positions_1d) and blend windows
+     (infer.compute_importance_map_2d).
+   - src/inksweep/readers/canonical.py: the recipe of ink-detection/optimized_inference (Hann window, clipping,
+     stitching), whose model module is imported at run time, not copied.
+   At run time inksweep imports the vesuvius package (installed from the villa repository at a pinned commit) to build
+   the villa-family networks. The GPL-3.0 parts of villa (volume-cartographer, VC3D, vc_* tools) are not used, copied
+   or checked out.
+
+2. Nieuwlaar/pherc343-first-letters (https://github.com/Nieuwlaar/pherc343-first-letters), MIT,
+   Copyright (c) 2026 Erwin Nieuwlaar.
+   - src/inksweep/ensemble.py: transcription of ink/scripts/ensemble_maps.py (statistics, z-score ensemble, images)
+     and of the overlay arithmetic of ink/scripts/make_submission_image.py.
+   - src/inksweep/resample.py: transcription of ink/scripts/hecate_prep.py.
+   - src/inksweep/tiling.py, src/inksweep/sweep.py: the depth windows of ink/scripts/run_ink.sh, the tile-phase
+     padding of pad_render.py and the merge rule of merge_tile_phase.py.
+   - src/inksweep/compare.py: the file names and 8-bit encodings of the recipe's maps.
+   The node scripts run the release's own scripts (fetched at a pinned commit) as the reference.
+
+3. EconLearn/vesuvius-first-letters-stage-loss (https://github.com/EconLearn/vesuvius-first-letters-stage-loss), MIT,
+   Copyright (c) 2026 Jude Wallis.
+   - src/inksweep/render.py: port of tools/g12lib.py (clean-room re-implementation of vc_render_tifxyz's behaviour:
+     tifxyz reading, normals, bilinear surface points, trilinear sampling, truncation) and of the normal-sign rule of
+     tools/ensemble/render66.py.
+   - src/inksweep/readers/norm.py: the method of the exact GPU normalisation (tools/ensemble/speed/fastvilla.py),
+     re-implemented.
+   - src/inksweep/readers/v8in.py: the v8-in stitching fix (patches/v8in-stitching-normalise-by-blend-weight.patch).
+
+4. scrollprize/hecate (https://huggingface.co/scrollprize/hecate), MIT, Copyright (c) 2026 Vesuvius Challenge.
+   - The tiling, window and accumulation rules of hecate.py are transcribed in src/inksweep/tiling.py and
+     src/inksweep/sweep.py; hecate.py itself is downloaded at a pinned revision, checked against its sha256 and
+     imported at run time (not redistributed).
+
+5. YoussefMoNader/ink-8um-v8in (https://huggingface.co/YoussefMoNader/ink-8um-v8in), MIT (model card).
+   - The tiling, coverage and blending rules of ink8um/inference.py are transcribed in src/inksweep/tiling.py; the
+     model code and weights are downloaded at a pinned revision, checked against their sha256 and imported at run
+     time (not redistributed).
+
+6. ChullMotors/ink-nullkit (https://github.com/ChullMotors/ink-nullkit), MIT, Copyright (c) 2026 Chris Hull.
+   - Method only (paired spatial block bootstrap), recommended in README.md for comparing readers; no code copied.
+
+Model weights are not part of inksweep. They are downloaded from their authors' repositories at pinned revisions
+under their own licences (all MIT as published; see README.md, "Readers"). Scan data and anything derived from it
+(renders, ink maps, images) are under the Vesuvius Challenge data licence (CC BY-NC 4.0).
+
+MIT License (applies to the portions listed above, with the respective copyright notices):
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
