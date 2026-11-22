@@ -91,7 +91,7 @@ def add_run_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--keep-phases", action="store_true", help="keep the per-phase raw maps")
     p.add_argument("--no-need-masks", action="store_true", help="select merge: run every tile in both phases")
     p.add_argument("--gpus", default=None, help="comma list of CUDA device indices (one process each)")
-    p.add_argument("--device", default="cuda")
+    p.add_argument("--device", default="auto", help="auto (CUDA, else Apple MPS, else CPU), cuda, cuda:N, mps or cpu")
     p.add_argument("--max-gpu-mem-gb", type=float, default=None,
                    help="cap PyTorch's CUDA allocator at this many GiB per GPU (a test aid to emulate a smaller card)")
     p.add_argument("--ckpt-dir", default="checkpoints")
@@ -167,7 +167,7 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--reference-tsv")
     b.add_argument("--ckpt-dir", default="checkpoints")
     b.add_argument("--no-download", action="store_true")
-    b.add_argument("--device", default="cuda")
+    b.add_argument("--device", default="auto", help="auto (CUDA, else Apple MPS, else CPU), cuda, cuda:N, mps or cpu")
     b.add_argument("--voxel-um", type=float)
     b.add_argument("--batch", type=int)
     b.add_argument("--max-gpu-mem-gb", type=float, default=None,
@@ -226,7 +226,7 @@ def _ensemble_cfg(a: argparse.Namespace, readers: Sequence[str], defaults: dict)
 
 def cmd_run(a: argparse.Namespace) -> int:
     from .runner import run
-    from .sweep import SweepConfig
+    from .sweep import SweepConfig, resolve_device
 
     d = RECIPE_DEFAULTS.get(a.recipe or "", {})
     readers = _csv(a.readers or d.get("readers"))
@@ -243,7 +243,7 @@ def cmd_run(a: argparse.Namespace) -> int:
                       channels_last=not a.no_channels_last, reference_storage=not a.no_reference_storage,
                       keep_raw=not a.no_raw, keep_phases=a.keep_phases, need_masks=not a.no_need_masks,
                       resample_threads=a.resample_threads, max_gpu_mem_gb=a.max_gpu_mem_gb)
-    devices = [f"cuda:{g}" for g in _csv(a.gpus)] if a.gpus else [a.device]
+    devices = [f"cuda:{g}" for g in _csv(a.gpus)] if a.gpus else [resolve_device(a.device)]
     overrides: dict = {}
     for k, v in _pairs(a.tile).items():
         overrides.setdefault(k, {}).update(tile=int(v[0]), stride=int(v[0]) // 2)
@@ -325,6 +325,7 @@ BENCH_CONFIGS = {"exact": dict(mode="exact"), "fast": dict(mode="fast"),
 
 def cmd_bench(a: argparse.Namespace) -> int:
     from .bench import bench, markdown
+    from .sweep import resolve_device
     from . import io as iox
 
     configs = []
@@ -335,7 +336,7 @@ def cmd_bench(a: argparse.Namespace) -> int:
         configs.append(conf)
     phases = tuple(tuple(int(v) for v in p.split(",")) for p in a.phase) or ((0, 0),)
     report = bench(a.surface, _csv(a.readers), parse_depths(a.depths), configs, a.out, ckpt_dir=a.ckpt_dir,
-                   download=not a.no_download, device=a.device, rows=_range(a.rows), cols=_range(a.cols),
+                   download=not a.no_download, device=resolve_device(a.device), rows=_range(a.rows), cols=_range(a.cols),
                    voxel_um=a.voxel_um, orientations=_csv(a.orientations), phases=phases,
                    reference_tsv=a.reference_tsv, max_gpu_mem_gb=a.max_gpu_mem_gb, profile=a.profile)
     iox.write_json(Path(a.out) / "bench.json", report)

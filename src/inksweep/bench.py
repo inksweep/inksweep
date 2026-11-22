@@ -67,6 +67,8 @@ def _first_line(exc: BaseException, limit: int = 200) -> str:
 def _free_cuda() -> None:
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+    elif getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+        torch.mps.empty_cache()
 
 
 def summarise_reader(recs: Sequence[MapRecord], load_s: float) -> dict:

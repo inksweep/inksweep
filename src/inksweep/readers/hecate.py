@@ -60,7 +60,9 @@ def _load(paths: Any, device: torch.device | str, *, sampling_um: float) -> nn.M
     model = hecate.load_model(ckpt, str(device))
     if abs(float(model.sampling_um) - sampling_um) > 1e-6:
         raise ValueError(f"{ckpt}: checkpoint samples {model.sampling_um} µm, reader expects {sampling_um} µm")
-    return model
+    from ..mps import prepare_for_device
+
+    return prepare_for_device(model, device)
 
 
 def division_table(divisor: float) -> torch.Tensor:

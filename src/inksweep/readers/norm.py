@@ -85,6 +85,30 @@ def _order_statistic(cum: torch.Tensor, k: int) -> torch.Tensor:
     return (cum <= k).sum(1)
 
 
+SPREAD = 256   # sub-histograms per patch on MPS
+
+
+def _histograms(flat: torch.Tensor) -> torch.Tensor:
+    """Per-row counts of the values 0..255 of a uint8 ``[B, n]`` tensor, as int64 ``[B, 256]``.
+
+    On Apple GPUs (MPS) ``bincount`` serialises on atomic adds to one bin, so a patch dominated by one grey value
+    (the zero margin of a segment, a flat region) took up to seconds: on PHerc0841 w00 normalisation was 90 % of
+    a Reader V3 map. There every position adds into one of ``SPREAD`` sub-histograms (by position modulo
+    ``SPREAD``), which are then summed: the same integer counts, ~30x faster on real CT. Elsewhere one bincount.
+    """
+    batch, n = flat.shape
+    device = flat.device
+    values = flat.to(torch.int64)
+    if device.type == "mps":
+        sub = torch.arange(n, device=device, dtype=torch.int64) % SPREAD
+        rows = torch.arange(batch, device=device, dtype=torch.int64)[:, None] * SPREAD
+        index = values + (rows + sub[None, :]) * 256
+        counts = torch.bincount(index.reshape(-1), minlength=256 * SPREAD * batch)
+        return counts.reshape(batch, SPREAD, 256).sum(1)
+    offsets = torch.arange(batch, device=device, dtype=torch.int64)[:, None] * 256
+    return torch.bincount((values + offsets).reshape(-1), minlength=256 * batch).reshape(batch, 256)
+
+
 class RobustMadGPU:
     """Exact batched ``normalize_robust`` for uint8 patches of ``n_values`` voxels each.
 
@@ -119,7 +143,8 @@ class RobustMadGPU:
         ks = torch.arange(first, last + 1, device=cum.device)
         stats = (cum[:, None, :] <= ks[None, :, None]).sum(2)          # [B, K] order statistics first..last
         values = [_numpy_percentile(self.n, q, first, tuple(row)) for row in stats.cpu().tolist()]
-        return torch.tensor(values, dtype=torch.float64, device=cum.device)
+        # float64 stays on the CPU: MPS has no float64. The values are already on the host, so no extra transfer.
+        return torch.tensor(values, dtype=torch.float64)
 
     def _middle(self, values: torch.Tensor, cum: torch.Tensor) -> torch.Tensor:
         """numpy median (float32) from per-row sorted ``values`` [B, K] with inclusive cumulative counts ``cum``."""
@@ -139,11 +164,10 @@ class RobustMadGPU:
         if flat.shape[1] != self.n:
             raise ValueError(f"patches hold {flat.shape[1]} values, normaliser was built for {self.n}")
         device = flat.device
-        offsets = torch.arange(batch, device=device, dtype=torch.int64)[:, None] * 256
-        hist = torch.bincount((flat.to(torch.int64) + offsets).reshape(-1), minlength=256 * batch).reshape(batch, 256)
+        hist = _histograms(flat)
         cum = hist.cumsum(1)
         lo64, hi64 = (self._percentile(cum, q, first, last) for q, first, last in self.windows)
-        lo, hi = lo64.to(torch.float32), hi64.to(torch.float32)         # np.clip with Python floats -> float32 bounds
+        lo, hi = lo64.to(torch.float32).to(device), hi64.to(torch.float32).to(device)   # np.clip bounds in float32
         # median of the clipped patch = median of the clipped order statistics (clipping is monotone)
         grey = torch.arange(256, device=device, dtype=torch.float32)[None, :].expand(batch, 256)
         clipped = torch.minimum(torch.maximum(grey, lo[:, None]), hi[:, None])   # clip(v) for every grey value v
@@ -152,9 +176,9 @@ class RobustMadGPU:
         dev_values, order = torch.sort(torch.abs(clipped - median[:, None]), dim=1)
         dev_cum = hist.gather(1, order).cumsum(1)
         mad = self._middle(dev_values, dev_cum)
-        scaled = mad.to(torch.float64) * SCALE
+        scaled = mad.cpu().to(torch.float64) * SCALE                    # float64 on the CPU (MPS has no float64)
         fallback = ~torch.isfinite(scaled) | (scaled < MAD_FLOOR)
-        divisor = torch.where(fallback, torch.ones_like(scaled), scaled).to(torch.float32)
+        divisor = torch.where(fallback, torch.ones_like(scaled), scaled).to(torch.float32).to(device)
         view = (batch,) + (1,) * (len(shape) - 1)
         x = patches.to(torch.float32)
         x = torch.minimum(torch.maximum(x, lo.view(view)), hi.view(view))

@@ -67,7 +67,9 @@ def _load(paths: Any, device: torch.device | str) -> nn.Module:
     result = model.load_state_dict(state, strict=False)
     if result.missing_keys:
         raise ValueError(f"{path}: {len(result.missing_keys)} missing weights, e.g. {result.missing_keys[:3]}")
-    return model.to(device).eval()
+    from ..mps import prepare_for_device
+
+    return prepare_for_device(model.to(device).eval(), device)
 
 
 _TABLE = torch.from_numpy(np.minimum(np.arange(256), 200).astype(np.float32) / np.float32(CLIP_MAX))

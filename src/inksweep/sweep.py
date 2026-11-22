@@ -54,6 +54,7 @@ from .tiling import (blend_window, centre_out, depth_tag, inside_mask_positions,
                      v8in_coverage, window_indices, window_positions)
 
 LOG = logging.getLogger("inksweep")
+MPS_GROUP_BYTES = 1 << 27     # tile group cap on Apple GPUs (unified memory), see Sweep.phase_map
 ORIENTATIONS = ("forward", "reverse")
 
 
@@ -152,6 +153,8 @@ class StageTimer:
     def _sync(self) -> None:
         if self.device.type == "cuda":
             torch.cuda.synchronize(self.device)
+        elif self.device.type == "mps":
+            torch.mps.synchronize()
 
     @contextlib.contextmanager
     def stage(self, name: str) -> Iterator[None]:
@@ -199,6 +202,28 @@ def cap_gpu_memory(device: torch.device, gb: Optional[float]) -> Optional[float]
     torch.cuda.set_per_process_memory_fraction(fraction, device)
     _CAPPED.add(index)
     return fraction
+
+
+def resolve_device(name: str) -> str:
+    """``auto`` -> ``cuda`` when a CUDA GPU is visible, else ``mps`` on an Apple GPU, else ``cpu``; other names as given."""
+    if name != "auto":
+        return name
+    if torch.cuda.is_available():
+        return "cuda"
+    mps = getattr(torch.backends, "mps", None)
+    if mps is not None and mps.is_available():
+        return "mps"
+    LOG.warning("--device auto: no CUDA or Apple GPU is visible, so this runs on the CPU (slow); "
+                "pass --device cpu to choose that, or --device cuda to fail instead")
+    return "cpu"
+
+
+def empty_cache(device: torch.device) -> None:
+    """Release the caching allocator's unused blocks on a CUDA or Apple (MPS) device; a no-op on the CPU."""
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+    elif device.type == "mps":
+        torch.mps.empty_cache()
 
 
 def reset_gpu_peaks(device: torch.device) -> None:
@@ -437,8 +462,9 @@ class Sweep:
                     amp: Optional[torch.dtype]) -> Callable[[torch.Tensor], torch.Tensor]:
         """forward(x) under the reader's autocast; with CUDA graphs a captured replay for full batches."""
         def plain(x: torch.Tensor) -> torch.Tensor:
-            ctx = torch.autocast("cuda", dtype=amp) if (amp is not None and self.device.type == "cuda") \
-                else contextlib.nullcontext()
+            # The reference autocast dtype on CUDA and on Apple GPUs (MPS autocast has fp16 and bf16); the CPU runs fp32.
+            ctx = torch.autocast(self.device.type, dtype=amp) \
+                if (amp is not None and self.device.type in ("cuda", "mps")) else contextlib.nullcontext()
             with ctx:
                 return spec.forward(module, x)
 
@@ -509,7 +535,9 @@ class Sweep:
             bounds = np.cumsum([0] + sizes)
             n = int(bounds[-1])
             origins = torch.from_numpy(np.concatenate(batches)).to(self.device)
-            group_tiles = max(batch_size, int(self.cfg.group_bytes // max(1, spec.window_layers * p * p * 4)))
+            # Apple GPUs share the host's RAM: smaller groups keep a full-segment sweep out of swap (no value changes).
+            group_bytes = min(self.cfg.group_bytes, MPS_GROUP_BYTES) if self.device.type == "mps" else self.cfg.group_bytes
+            group_tiles = max(batch_size, int(group_bytes // max(1, spec.window_layers * p * p * 4)))
             bi = 0
             while bi < len(batches):
                 bj, count = bi, 0
@@ -659,8 +687,8 @@ class Sweep:
                                              skipped="window outside the stack"))
         if not todo:
             return records
-        if self.device.type == "cuda" and self._last_reader != spec.name:
-            torch.cuda.empty_cache()                         # release the previous reader's cached blocks, so that
+        if self._last_reader != spec.name:
+            empty_cache(self.device)                         # release the previous reader's cached blocks, so that
         self._last_reader = spec.name                        # each reader's memory peaks start from its own needs
         t0 = time.time()
         if module is None:                                   # a module passed in is already prepared
@@ -706,7 +734,7 @@ def _worker(rank: int, device: str, surface_args: dict, out_dir: str, cfg: Sweep
             spec = specs[job.reader]
             if current != spec.name:
                 module = None
-                torch.cuda.empty_cache()
+                empty_cache(sweep.device)
                 module = sweep.prepare_module(spec, spec.load(checkpoints[spec.name], sweep.device))
                 current = spec.name
             recs = sweep.run_reader(spec, checkpoints[spec.name], depths=[job.depth], orientations=[job.orientation],
